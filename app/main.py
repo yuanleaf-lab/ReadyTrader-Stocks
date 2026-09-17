@@ -1,10 +1,10 @@
-"""Paper-only Streamable HTTP MCP entry point with fail-closed remote auth."""
+"""Paper-only Streamable HTTP MCP entry point with a secret remote path."""
 import os
+import re
 from contextlib import asynccontextmanager
 
 import uvicorn
 from fastmcp import FastMCP
-from fastmcp.server.auth.providers.jwt import StaticTokenVerifier
 from starlette.responses import JSONResponse
 
 from app.core.container import get_service
@@ -13,26 +13,20 @@ from app.tools.market import register_market_tools
 from app.tools.trading import register_trading_tools
 
 
-_AUTH_UNSET = object()
-
-
-def resolve_http_auth():
-    """Require a static bearer token on Railway; allow unauthenticated local tests only."""
-    token = os.getenv('MCP_AUTH_TOKEN', '').strip()
-    if token:
-        return StaticTokenVerifier(
-            tokens={token: {'client_id': 'readytrader-paper', 'scopes': ['paper:access']}},
-            required_scopes=['paper:access'],
-        )
+def resolve_mcp_path() -> str:
+    """Require a long unguessable MCP path on Railway; keep /mcp for local development."""
+    raw = os.getenv('MCP_PATH', '').strip()
+    if raw:
+        if not re.fullmatch(r'/mcp-[A-Za-z0-9_-]{32,128}', raw):
+            raise ValueError('MCP_PATH must be /mcp- followed by 32..128 URL-safe characters.')
+        return raw
     if os.getenv('RAILWAY_ENVIRONMENT'):
-        raise ValueError('MCP_AUTH_TOKEN is required for Railway HTTP deployment.')
-    return None
+        raise ValueError('MCP_PATH is required for Railway HTTP deployment.')
+    return '/mcp'
 
 
-def create_mcp(service=None, *, sampling=True, auth=_AUTH_UNSET):
+def create_mcp(service=None, *, sampling=True, auth=None):
     resolve = (lambda: service) if service is not None else get_service
-    if auth is _AUTH_UNSET:
-        auth = resolve_http_auth()
 
     @asynccontextmanager
     async def lifespan(server):
@@ -72,8 +66,8 @@ def resolve_http_port() -> int:
     return port
 
 
-def create_http_app(service=None, *, sampling=True, auth=_AUTH_UNSET):
-    """Build the protected remote transport at /mcp and public operational /health."""
+def create_http_app(service=None, *, sampling=True, auth=None, mcp_path=None):
+    """Build the unauthenticated remote transport at a secret path and public /health."""
     resolve = (lambda: service) if service is not None else get_service
     server = create_mcp(service, sampling=sampling, auth=auth)
 
@@ -91,23 +85,23 @@ def create_http_app(service=None, *, sampling=True, auth=_AUTH_UNSET):
             {'ok': True, 'status': 'ok', 'mode': 'paper', 'paper_only': True, 'database': 'ok'}
         )
 
-    return server.http_app(path='/mcp', transport='streamable-http', json_response=True)
+    return server.http_app(path=mcp_path or resolve_mcp_path(), transport='streamable-http', json_response=True)
 
 
 def run_http_server():
-    """Fail before binding when Paper-only configuration, auth, or SQLite is unusable."""
+    """Fail before binding when Paper-only configuration, secret path, or SQLite is unusable."""
     try:
         service = get_service()
         service.engine.state()
-        auth = resolve_http_auth()
+        mcp_path = resolve_mcp_path()
         port = resolve_http_port()
     except Exception as exc:
         raise SystemExit(f'Paper-only MCP startup failed: {exc}') from exc
-    uvicorn.run(create_http_app(service, auth=auth), host='0.0.0.0', port=port, log_level='info')
+    uvicorn.run(create_http_app(service, auth=None, mcp_path=mcp_path),
+                host='0.0.0.0', port=port, log_level='info')
 
 
-# Schema/in-process test object only. The deployed HTTP entry point is run_http_server(),
-# which always resolves fail-closed HTTP authentication separately.
+# Schema/in-process test object only. The deployed HTTP entry point resolves its secret path separately.
 mcp = create_mcp(auth=None)
 
 if __name__ == '__main__':
