@@ -1,327 +1,139 @@
-# ReadyTrader-Stocks
+# ReadyTrader Paper Core
 
-[![CI](https://github.com/up2itnow0822/ReadyTrader-Stocks/actions/workflows/ci.yml/badge.svg)](https://github.com/up2itnow0822/ReadyTrader-Stocks/actions/workflows/ci.yml)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+Streamable HTTP MCP for simulated USD US common-stock trading. There is no live mode,
+broker connection, deposit, limit order, short, margin, option or crypto tool.
+All orders use virtual funds. The local endpoint is `/mcp`; Railway, OAuth and
+ChatGPT setup remain outside this implementation phase.
 
-## Important Disclaimer (Read Before Use)
+## Local setup
 
-ReadyTrader-Stocks is provided for informational and educational purposes only and does not constitute financial, investment, legal, or tax advice. Trading stocks and equities involves substantial risk and may result in partial or total loss of funds. Past performance is not indicative of future results. You are solely responsible for any decisions, trades, configurations, supervision, and the security of your credentials/API keys. ReadyTrader-Stocks is provided “AS IS”, without warranties of any kind, and we make no guarantees regarding profitability, performance, availability, or outcomes. By using ReadyTrader-Stocks, you acknowledge and accept these risks.
+Python 3.12:
 
-See also: `DISCLAIMER.md`.
-
----
-
----
-
-## 🌎 The Big Picture
-
-**ReadyTrader-Stocks** is a specialized bridge that turns your AI Agent (like Gemini or Claude) into a professional stock trading operator. 
-
-Think of it this way: Your AI agent provides the **Intelligence** (analyzing charts, earnings reports, and news sentiment), while ReadyTrader-Stocks provides the **Hands** (connecting to brokerages and data providers) and the **Safety Brakes** (enforcing your risk rules). It allows you to delegate complex trading tasks to an AI without giving it unchecked access to your capital.
-
-## 🛡️ The Trust Model: Intelligence vs. Execution
-
-The core philosophy of this project is a strict separation of powers:
-
-*   **The AI Agent (The Brain):** Decides *what* and *when* to trade. It can research historical data, scan social media, and simulate strategies, but it has no direct power to move money.
-*   **The MCP Server (The Guardrail):** Owns the API keys and enforces your safety policies. It filters every AI request through a "Risk Guardian" that rejects any trade that is too large, too risky, or violates your personal limits.
-
-## 💰 Funding Model (Non-Custodial)
-
-ReadyTrader-Stocks operates on a **User-Custodied** basis. This means:
-
-*   **You keep your funds**: Your capital remains in your own brokerage account (e.g., Alpaca, Tradier, request Interactive Brokers).
-*   **You control the keys**: You provide API keys that allow the agent to *trade* but (recommended) not *withdraw*.
-*   **Agent as Operator**: The agent acts as a remote operator. It sends order instructions to your broker using your keys, and the broker handles actual execution and settlement.
-
-> **Note**: In **Paper Mode** (default), we simulate a virtual wallet with fake funds so you can practice without linking a real brokerage.
-
-## 🔄 A Day in the Life of a Trade
-
-1.  **Research:** You ask your agent, "Find a good entry for AAPL." The agent calls `fetch_ohlcv` and `get_sentiment`.
-2.  **Proposal:** The agent concludes, "AAPL is oversold; I want to buy $1000 worth of shares." It calls `place_market_order`.
-3.  **Governance:** The MCP server checks its rules. Is $1000 within your `MAX_TRADE_AMOUNT`? If yes, it creates a **Pending Execution**.
-4.  **Consent:** If you've enabled "Human-in-the-loop," the agent notifies you. You click **Confirm** in the [Web UI](#-optional-web-ui), and only then does the trade hit the market.
-
----
-
-### 🖥️ Premium Next.js Dashboard
-
-`ReadyTrader-Stocks` includes a professional Next.js dashboard for real-time monitoring, multi-agent coordination, and trade approvals.
-
-**How to Enable:**
-1.  Navigate to the directory: `cd frontend`
-2.  Install dependencies: `npm install`
-3.  Run the development server: `npm run dev`
-4.  Access it at `http://localhost:3000`.
-
-**Features:**
--   **Real-time Tickers**: Low-latency price streaming via WebSockets.
--   **Multi-Agent Insights**: Shared "Market Insights" for collaborative research.
--   **Mobile Guard**: Push notifications for trades requiring manual approval.
--   **Glassmorphic UI**: High-performance charting and portfolio visualization.
-
----
-
-## 🚀 Key Features
-
-*   **📉 Paper Trading Simulator**: Zero-risk practice environment with persistent balances and realistic order handling.
-*   **🧠 Strategy Factory**: Built-in Backtesting Engine with a **Strategy Marketplace** for saving and sharing agent configurations.
-*   **📰 Advanced Intelligence**: Real-time sentiment feeds from Reddit and News APIs with local NLP fallbacks.
-
----
-
-## ⚡ 10-minute evaluation
-
-Run both demos locally (no exchange keys, no RPC needed):
-
-```bash
-python examples/paper_quick_demo.py
-python examples/stress_test_demo.py
+```powershell
+python -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -r requirements.lock.txt -r requirements-dev.txt
+.\.venv\Scripts\python.exe -m pytest -o addopts='' -q
+.\.venv\Scripts\python.exe -m app.main
 ```
 
-You’ll get exportable artifacts under `artifacts/demo_stress/` (gitignored).
+The server listens on `0.0.0.0:${PORT}`, defaulting to port `8000`; use
+`http://127.0.0.1:8000/mcp` locally and `GET /health` for a non-authenticated
+service/database readiness check. `PORT` must be an integer from 1 to 65535.
 
-Prompt pack (copy/paste): `prompts/READYTRADER_PROMPT_PACK.md`.
+Set variables explicitly in the launching process (see `env.example`). An `.env`
+file is not automatically loaded. Do not supply brokerage credentials. Live-mode
+or brokerage variables cause startup failure; they cannot change this build into
+real trading. Runtime imports do not create an account; service startup does.
 
-![ReadyTrader-Stocks demo flow](docs/assets/demo-flow.svg)
+## Server policy defaults
 
-## 🛠️ Installation & Setup
+| Setting | Default |
+| --- | --- |
+| Database | `data/paper.db` |
+| Initial virtual USD | 10000, used only on FIRST creation |
+| Fixed execution fee | USD 0.01 |
+| Proportional fee | 0.0001 of fill notional (0.01%) |
+| Adverse slippage | 5 basis points (0.05%) |
+| Maximum buy debit / pre-trade equity | 10% |
+| Maximum single-stock value / post-trade equity | 25% |
+| Maximum total holdings / post-trade equity | 80% |
+| Maximum execution quote age | 180 seconds |
+| Operator-reviewed symbols for ambiguous metadata | AAPL, MSFT |
 
-### Prerequisites
-*   Docker (Docker Compose optional)
+These are simulator defaults, not investment recommendations. All policy is
+server-controlled. Tools cannot override prices, fees, limits or principal.
+Market metadata must still be USD/EQUITY/on a supported US exchange and must not
+identify a derivative, preferred share, depositary receipt or fund. The approved
+symbol list does NOT override conflicting metadata. Explicit common-stock
+metadata may qualify other symbols; ambiguous instruments require operator
+review. This intentionally does not claim all Yahoo EQUITY instruments are common
+stocks. Search filters by the same rules.
 
-### 1. Build & Run (Standalone)
-Run the server in a container. It exposes stdio for MCP clients.
-```bash
-cd ReadyTrader-Stocks
-docker build -t readytrader-stocks .
-# Run interactively (to test)
-docker run --rm -i readytrader-stocks
-```
+## Tool contract
 
-### Local development (no Docker)
-If you want to run or test ReadyTrader-Stocks locally:
+Exactly twelve tools are registered: `get_stock_price`, `get_stock_history`,
+`search_symbol`, `get_portfolio`, `get_cash_balance`, `buy`, `sell`, `get_orders`,
+`get_trade_history`, `get_performance`, `get_risk_status`, `reset_paper_account`.
+See `docs/TOOLS.md` for inputs and behavior. All success responses contain
+`ok: true, data: ...`; all application failures contain `ok: false, error: ...`.
+A rejected order is never reported as a fill. MCP input-schema validation may
+also return a protocol tool error before the function runs.
 
-```bash
-pip install -r requirements-dev.txt
-python app/main.py
-```
+`quantity` means SHARES, supports up to 8 decimal places, and must be positive
+and finite. Decimal strings are preferred. Money, costs and quantities are stored
+as exact canonical decimal TEXT in SQLite, never binary floating-point balances.
+Ledger values use 8 decimal places and round half-even. Tiny orders whose notional
+rounds to zero are rejected. Outputs return decimal strings.
 
-### 2. Configuration (`.env`)
+Every buy/sell requires `client_order_id`. Retry the same operation with exactly
+the same ID and arguments; a changed payload with that ID is rejected. Filled and
+persisted rejected requests replay their original result, including across restart
+and reset. A replay after reset does not place an order in the new account cycle.
+Infrastructure failures may require retry with the SAME ID; never blindly use a
+new ID after a timeout. Cash/position/order/equity writes are one SQLite transaction.
 
-Create a `.env` file or pass environment variables. Start from `env.example` (copy to `.env`).
+## Accounting and risk
 
-<details>
-<summary><b>🛡️ Live Trading Safety & Approval</b></summary>
+Buy fill = reference x (1 + slippage_bps/10000). Sell fill uses minus.
+Fee = fixed fee + fill notional x fee_rate. Buy cash debit includes fees; sell
+cash credit deducts fees. Slippage is recorded separately for analysis but is
+already embedded in the fill price, never charged again.
 
-| Variable | Default | Description |
-| :--- | :--- | :--- |
-| `PAPER_MODE` | `true` | Set to `false` for live trading. |
-| `LIVE_TRADING_ENABLED` | `false` | Must be `true` for any live execution. |
-| `TRADING_HALTED` | `false` | Global kill switch to halt all live actions. |
-| `EXECUTION_APPROVAL_MODE` | `auto` | `auto` executes immediately; `approve_each` requires manual confirmation. |
-| `API_PORT` | `8000` | Port for the FastAPI/WebSocket server (`api_server.py`). |
-| `DISCORD_WEBHOOK_URL`| `""` | Optional webhook for trade approval notifications. |
-</details>
+Weighted-average remaining cost includes buy fees. Partial sells remove their
+proportionate cost; the final sell removes all remaining cost. Realized PnL is
+net sale proceeds minus removed cost. Unrealized PnL is reference market value
+minus remaining cost. Equity is cash plus current reference market values.
 
-<details>
-<summary><b>🔑 Exchange & Signing Credentials</b></summary>
+Buy limits use freshly valued equity, prospective cumulative symbol holdings and
+all holdings, including fees/slippage. Sells are not blocked by buy allocation
+limits; cash and owned quantity constraints always apply. Risk and balance checks
+are repeated inside the SQLite write transaction. There is no margin credit.
 
-| Variable | Description |
-| :--- | :--- |
-| `ALPACA_API_KEY` | API Key for Alpaca brokerage. |
-| `ALPACA_API_SECRET` | API Secret for Alpaca brokerage. |
-| `TRADIER_ACCESS_TOKEN` | Access Token for Tradier. |
-</details>
+Snapshots are recorded only after a completed transaction, never between its
+cash and holdings updates. Queries with fresh complete marks also record snapshots;
+a local background sampler runs every 300 seconds during regular sessions while
+the MCP process is alive. Maximum drawdown scans all persisted observations, even
+when only the last bounded portion of the curve is returned. Current drawdown is
+separate. Missing/stale observations are not fabricated or zero-filled. No sample
+is guaranteed at the exact closing auction; gaps across downtime remain gaps.
 
-<details>
-<summary><b>📈 Market Data & CCXT Tuning</b></summary>
+## Account lifecycle
 
-| Variable | Default | Description |
-| :--- | :--- | :--- |
-| `MARKETDATA_EXCHANGES` | `alpaca` | Comma-separated list of brokerages to use for data. |
-| `TICKER_CACHE_TTL_SEC` | `5` | How long to cache price data. |
-| `ALLOW_TICKERS` | `*` | Comma-separated allowlist of tradeable tickers. |
-</details>
+Initial capital is persisted once. Changing PAPER_INITIAL_CASH, restarting or
+upgrading never tops up an existing account. Reset restores the persisted original
+principal in a new cycle, retaining the old orders and curve. Reset takes no amount.
 
-<details>
-<summary><b>🛠️ Ops, Observability & Limits</b></summary>
+Run `python -m tools.authorize_paper_reset` locally as the server operator, type the
+explicit authorization phrase, then pass its one-use five-minute token to the reset
+tool. The token is stored hashed, bound to the account cycle and consumed atomically.
+There is no MCP tool that can obtain a reset authorization. Reset archives all past
+account cycles and does not erase global client_order_id history.
 
-| Variable | Default | Description |
-| :--- | :--- | :--- |
-| `RATE_LIMIT_DEFAULT_PER_MIN` | `120` | Default API rate limit. |
-| `RISK_PROFILE` | `conservative`| Presets for sizing and safety limits. |
-| `ALLOW_CHAINS` | `ethereum...` | Allowlists for EVM networks. |
-</details>
+Old upstream SQLite schemas are rejected without destructive migration. Preserve
+old databases separately and start with a new path, or implement and verify an
+explicit migration; old incomplete PnL cannot be trusted or silently reconstructed.
 
----
+## Simulation limits
 
-#### Brokerage credentials
-To place live orders or fetch balances, configure brokerage credentials via env.
+- yfinance supplies minute reference data, not guaranteed live bid/ask or liquidity.
+  Bad, missing, stale or ambiguous data rejects execution. No executed-price fallback.
+- NYSE calendar regular hours include holidays, weekends, DST and early closes.
+  Calendar availability is not a full individual-stock halt feed.
+- Fills are all-or-nothing at the configured reference/slippage model, with immediate
+  simulated reuse of sale proceeds. No order book, partial fills or T+1 settlement.
+- Splits detected since acquisition block valuation and trading until reconciliation;
+  automatic corporate-action adjustment is not implemented. Dividends are excluded.
+- Closed-session portfolio queries can display explicitly stale reference marks;
+  they do not add fake fresh curve points. Missing marks return failure.
+- This phase is a local single-account Streamable HTTP service. Do not expose it
+  publicly without the next phase's authentication and deployment verification.
 
-* `ALPACA_API_KEY=...`
-* `ALPACA_API_SECRET=...`
-* `TRADIER_ACCESS_TOKEN=...`
+## Verification and archived code
 
-Tools:
-* `place_stock_order(symbol, side, amount, order_type='market', price=0.0, exchange='alpaca', rationale='')`
-* `get_portfolio_balance()`
-* `reset_paper_wallet()` - **New: Reset all simulated data**
-* `deposit_paper_funds(asset, amount)` - **New: Add virtual cash**
-
-Market-data introspection:
-* `get_marketdata_capabilities(exchange_id='')`
-
-Market-data introspection:
-* `get_marketdata_capabilities(exchange_id='')`
-
----
-
-## 🔌 Integration Guide
-
-### Option A: Agent Zero (Recommended)
-To give Agent Zero these powers, add the following to your **Agent Zero Settings** (or `agent.yaml`).
-The MCP server key/name is arbitrary; we use `readytrader_stocks` in examples.
-
-Quick copy/paste file: `configs/agent_zero.mcp.yaml`.
-
-**Via User Interface:**
-1.  Go to **Settings** -> **MCP Servers**.
-2.  Add a new server:
-    *   **Name**: `readytrader_stocks`
-    *   **Type**: `stdio`
-    *   **Command**: `docker`
-    *   **Args**: `run`, `-i`, `--rm`, `-e`, `PAPER_MODE=true`, `readytrader-stocks`
-
-**Via `agent.yaml`:**
-```yaml
-mcp_servers:
-  readytrader_stocks:
-    command: "docker"
-    args: 
-      - "run"
-      - "-i" 
-      - "--rm"
-      - "-e"
-      - "PAPER_MODE=true"
-      - "readytrader-stocks"
-```
-Prebuilt config: `configs/agent_zero.mcp.yaml`.
-*Restart Agent Zero after saving.*
-
-### Option B: Generic MCP Client (Claude Desktop, etc.)
-Add this to your `mcp-server-config.json`:
-
-Quick copy/paste file: `configs/claude_desktop.mcp-server-config.json`.
-
-```json
-{
-  "mcpServers": {
-    "readytrader_stocks": {
-      "command": "docker",
-      "args": [
-        "run", 
-        "-i", 
-        "--rm", 
-        "-e", "PAPER_MODE=true", 
-        "readytrader-stocks"
-      ]
-    }
-  }
-}
-```
-Prebuilt config: `configs/claude_desktop.mcp-server-config.json`.
-
----
-
-## 📚 Feature Guide
-
-**Example Prompt:**
-> "Create a mean-reversion strategy for AAPL. Write a Python function `on_candle` that uses RSI. Run a backtest simulation on the last 500 hours and tell me the Win Rate and PnL."
-
-**What happens:**
-1.  Agent calls `fetch_ohlcv("AAPL")` to see data structure.
-2.  Agent writes code for `on_candle(close, rsi, state)`.
-3.  Agent calls `run_backtest_simulation(code, "AAPL")`.
-4.  Server runs the code in a sandbox and returns `{ "pnl": 15.5%, "win_rate": 60% }`.
-
-### 2. Paper Trading Laboratory (Zero-Key Flow)
-Perfect for "interning" your agent without any paid API keys.
-*   **Fund your account**: `deposit_paper_funds("USD", 100000)`
-*   **Researching Stocks**: Use `fetch_ohlcv` and `get_stock_price` (powered by public `yfinance` data).
-*   **Analyze Sentiment**: `fetch_rss_news` (MarketWatch/Yahoo Finance) provides real-time "Free" signals.
-*   **Place Orders**: `place_market_order("AAPL", "buy", 10)`
-*   **Reset Everything**: `reset_paper_wallet()`
-
-### 3. Market Regime & Risk
-The agent can query the "weather" before flying.
-*   **Tool**: `get_market_regime("AAPL")`
-*   **Output**: `{"regime": "TRENDING", "direction": "UP", "adx": 45.2}`
-*   **Agent Logic**: "The market is Trending Up (ADX > 25). I will switch to my Trend-Following Strategy and disable Mean-Reversion."
-
-**The Guardian (Passive Safety):**
-You don't need to do anything. If the agent tries to bet 50% of the portfolio on a whim, `validate_trade_risk` will **BLOCK** the trade automatically.
-
----
-
-## 🧰 Tool Reference
-For the complete (generated) tool catalog with signatures and docstrings, see: `docs/TOOLS.md`.
-
-| Category | Tool | Description |
-| :--- | :--- | :--- |
-| **Market Data** | `get_stock_price` | Live price from brokerage/data provider. |
-| | `fetch_ohlcv` | Historical candles for research. |
-| | `get_market_regime` | **Trend/Chop Detection**. |
-| **Intelligence** | `get_sentiment` | Fear & Greed Index (Market). |
-| | `get_social_sentiment` | X/Reddit Analysis (Financial focus). |
-| | `get_financial_news` | Bloomberg/Reuters (Simulated/Real). |
-| **Trading** | `place_market_order` | Execute market order. |
-| | `place_limit_order` | **Limit Order** (Paper Mode). |
-| | `check_orders` | Update Order Book (Paper Mode). |
-| **Account** | `get_portfolio_balance`| Check Account Balance. |
-| | `deposit_paper_funds`| Get fake money (Paper Mode). |
-| **Research** | `run_backtest_simulation` | **Run Strategy Backtest**. |
-| **Research** | `run_synthetic_stress_test` | Run **synthetic black-swan stress test** with deterministic replay + recommendations. |
-
----
-*Built for the Agentic Future.*
-
-## 🧪 Synthetic Stress Testing
-This MCP includes a **100% randomized (but deterministic-by-seed)** synthetic market simulator. It can generate trending, ranging, and volatile regimes and inject **black swan crashes** and **parabolic blow-off tops**.
-
-### Tool: `run_synthetic_stress_test(strategy_code, config_json='{}')`
-Returns JSON containing:
-- **metrics summary** across scenarios
-- **replay seeds** (master + per-scenario)
-- **artifacts**: CSV scenario metrics, plus worst-case equity curve CSV + trades JSON
-- **recommendations**: suggested parameter changes (and applies to `PARAMS` keys if present)
-
-Example `config_json`:
-```json
-{
-  "master_seed": 123,
-  "scenarios": 200,
-  "length": 500,
-  "timeframe": "1h",
-  "initial_capital": 10000,
-  "start_price": 100,
-  "base_vol": 0.01,
-  "black_swan_prob": 0.02,
-  "parabolic_prob": 0.02
-}
-```
-
----
-
-## 📌 Project docs
-- `README.md`: Project overview and configuration
-- `docs/TOOLS.md`: complete tool catalog (generated from `app/tools`)
-- `docs/ERRORS.md`: common error codes and operator troubleshooting
-- `docs/EXCHANGES.md`: exchange capability matrix (Supported vs Experimental)
-- `docs/MARKETDATA.md`: market data routing, freshness scoring, plugins, and guardrails
-- `docs/THREAT_MODEL.md`: operator-focused threat model (live trading)
-- `docs/CUSTODY.md`: key custody + rotation guidance
-- `docs/POSITIONING.md`: credibility-safe marketing + messaging
-- `RELEASE_READINESS_CHECKLIST.md`: what must be green before distribution
-- `CHANGELOG.md`: version-to-version change summary
+The active tests are the paper suite plus retained common/audit utility tests.
+`tests/legacy` holds upstream tests for removed features and superseded contracts;
+it is explicitly excluded, not presented as passing coverage. Legacy frontend,
+strategy/intelligence research and examples remain reference source only; the MCP
+does not load them. Brokerage modules and the old Web API/WebSocket entrypoints
+are permanent failure stubs, with no brokerage SDK in the runtime dependency set.
+The local Docker recipe packages only the paper runtime; deployment is not performed.

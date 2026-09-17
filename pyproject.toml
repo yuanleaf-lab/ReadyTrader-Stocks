@@ -1,12 +1,14 @@
 [project]
 name = "readytrader-stocks"
 version = "0.1.0"
-description = "ReadyTrader-Stocks: agent-first stock trading MCP with safety governance, backtesting, and stress testing."
+description = "Local paper-only US common-stock MCP with atomic SQLite accounting."
 requires-python = ">=3.12"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"
+norecursedirs = ["legacy", ".venv", ".work"]
+asyncio_default_fixture_loop_scope = "function"
 
 [tool.ruff]
 line-length = 160

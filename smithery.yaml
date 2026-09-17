@@ -3,32 +3,21 @@ startCommand:
   command: python
   args:
     - app/main.py
-name: ReadyTrader-Stocks
+name: ReadyTrader Paper Stocks
 description: >-
-  A specialized bridge that turns your AI Agent into a professional crypto trading operator.
-  Features specific "Intelligence vs. Execution" separation of powers, a "Risk Guardian" safety layer,
-  and deep DeFi integrations (Aave, Uniswap).
+  Local, Paper-only MCP for USD-denominated US common-stock simulation. It has
+  no brokerage credentials, live execution, crypto, options, shorting, or leverage.
 projectUrl: https://github.com/up2itnow/ReadyTrader-Stocks
 configSchema:
   type: object
   properties:
-    ALPACA_API_KEY:
+    PAPER_DB_PATH:
       type: string
-      description: Alpaca API Key for stock trading
-    ALPACA_API_SECRET:
+      description: Server-managed SQLite path for the persistent Paper ledger.
+    PAPER_INITIAL_CASH:
       type: string
-      description: Alpaca API Secret for stock trading
-    PAPER_MODE:
+      description: Initial USD cash used only when the account database is first created.
+    PAPER_APPROVED_SYMBOLS:
       type: string
-      description: Set to true for virtual paper trading (default)
-      default: "true"
-    RISK_PROFILE:
-      type: string
-      description: "Risk enforcement profile ('conservative', 'moderate', 'aggressive')."
-      default: "conservative"
-    EXECUTION_APPROVAL_MODE:
-      type: string
-      description: 'auto' or 'approve_each' to require human confirmation for every trade.
-      default: "auto"
-      description: "API Secret for centralized exchange execution."
+      description: Server-managed comma-separated symbols for ambiguous common-stock metadata.
   required: []

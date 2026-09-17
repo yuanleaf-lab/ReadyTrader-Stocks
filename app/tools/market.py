@@ -1,58 +1,33 @@
-import json
-from typing import Any, Dict, List
-
-from fastmcp import FastMCP
-
-from app.core.container import global_container
+"""Three bounded yfinance reference-data tools, not executable user-supplied prices."""
+from core.values import PaperError, aware
 
 
-def _json_ok(data: Dict[str, Any] | None = None) -> str:
-    payload = {"ok": True, "data": data or {}}
-    return json.dumps(payload, indent=2, sort_keys=True)
+def register_market_tools(mcp, service):
+    @mcp.tool(annotations={'readOnlyHint': True})
+    def get_stock_price(symbol: str) -> dict:
+        """Latest available regular-session reference price, not guaranteed live bid/ask or an executable quote."""
+        def read():
+            s = service()
+            try:
+                q = s.provider.fetch_quote(symbol)
+            except ValueError:
+                raise
+            except Exception as exc:
+                raise PaperError('market_data_unavailable', 'Validated market data is unavailable; retry later.') from exc
+            age = (aware(s.engine.clock())-aware(q.as_of)).total_seconds()
+            return {'symbol': q.symbol, 'currency': 'USD', 'reference_price': str(q.price),
+                    'as_of': aware(q.as_of).isoformat(), 'fetched_at': aware(q.fetched_at).isoformat(),
+                    'age_seconds': age, 'stale': age > s.engine.quote_max_age,
+                    'source': 'yfinance', 'price_kind': 'regular-session minute reference'}
+        return service()._read(read)
 
+    @mcp.tool(annotations={'readOnlyHint': True})
+    def get_stock_history(symbol: str, timeframe: str = '1d', limit: int = 100) -> dict:
+        """Bounded unadjusted OHLCV reference history for an eligible US common stock; no strategy execution."""
+        return service()._read(lambda: {'symbol': symbol, 'timeframe': timeframe,
+            'history': service().provider.fetch_ohlcv(symbol, timeframe, limit)})
 
-def _json_err(code: str, message: str, data: Dict[str, Any] | None = None) -> str:
-    payload = {"ok": False, "error": {"code": code, "message": message, "data": data or {}}}
-    return json.dumps(payload, indent=2, sort_keys=True)
-
-
-def get_stock_price(symbol: str) -> str:
-    """Fetch the latest real-time stock price (bid/ask/last)."""
-    try:
-        data = global_container.marketdata_bus.get_ticker(symbol)
-        return _json_ok(data)
-    except Exception as e:
-        return _json_err("market_data_error", str(e), {"symbol": symbol})
-
-
-def get_multiple_prices(symbols: List[str]) -> str:
-    """Fetch real-time prices for multiple stock tickers simultaneously."""
-    results = {}
-    for sym in symbols:
-        try:
-            results[sym] = global_container.marketdata_bus.get_ticker(sym)
-        except Exception:
-            results[sym] = {"error": "could not fetch price"}
-    return _json_ok({"prices": results})
-
-
-def fetch_ohlcv(symbol: str, timeframe: str = '1d', limit: int = 100) -> str:
-    """Fetch historical OHLCV candlestick data for technical analysis."""
-    try:
-        df = global_container.backtest_engine.fetch_ohlcv(symbol, timeframe, limit)
-        data = df.reset_index().to_dict(orient="records")
-        # Convert timestamps to string
-        for d in data:
-            if 'index' in d:
-                d['timestamp'] = str(d.pop('index'))
-            elif 'Date' in d:
-                d['timestamp'] = str(d.pop('Date'))
-        return _json_ok({"symbol": symbol, "timeframe": timeframe, "history": data})
-    except Exception as e:
-        return _json_err("history_error", str(e), {"symbol": symbol})
-
-
-def register_market_tools(mcp: FastMCP):
-    mcp.add_tool(get_stock_price)
-    mcp.add_tool(get_multiple_prices)
-    mcp.add_tool(fetch_ohlcv)
+    @mcp.tool(annotations={'readOnlyHint': True})
+    def search_symbol(query: str, limit: int = 10) -> dict:
+        """Find eligible USD US ordinary stocks. Does not permit funds, derivatives or change approved symbols."""
+        return service()._read(lambda: {'results': service().provider.search_symbol(query, limit)})

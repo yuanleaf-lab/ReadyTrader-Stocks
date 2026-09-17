@@ -5,6 +5,10 @@ __pycache__/
 
 # Virtual Environment
 venv/
+.venv/
+.work/
+*.db-wal
+*.db-shm
 env/
 
 # Database (Paper Trading & Stores)

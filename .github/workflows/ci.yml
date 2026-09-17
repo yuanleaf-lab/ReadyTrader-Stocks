@@ -7,15 +7,17 @@ on:
     branches: [main]
 
 jobs:
-  build:
+  test:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
-      - name: Use Node.js
-        uses: actions/setup-node@v5
+      - name: Set up Python
+        uses: actions/setup-python@v6
         with:
-          node-version: "20"
-      - name: Install dependencies
-        run: npm install --if-present || true
-      - name: Run tests
-        run: npm test --if-present || echo "No tests configured yet"
+          python-version: "3.12"
+      - name: Install locked dependencies
+        run: python -m pip install -r requirements.lock.txt
+      - name: Run Paper-only checks
+        run: |
+          python -m pytest -q
+          python -m ruff check .

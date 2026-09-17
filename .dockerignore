@@ -11,7 +11,10 @@ __pycache__/
 .env
 
 # Local runtime artifacts
-paper.db
+data/
+*.db
+*.db-shm
+*.db-wal
 
 # Dev-only
 tests/

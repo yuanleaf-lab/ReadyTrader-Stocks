@@ -1,104 +1,27 @@
-## ReadyTrader-Stocks Runbook (Equity-Focused)
+# Paper-only Streamable HTTP local runbook
 
-### Common operations
+1. Use Python 3.12 and a project-local venv. Install requirements.lock.txt and requirements-dev.txt.
+2. Configure environment variables explicitly using env.example as a reference. .env is not auto-loaded.
+3. Run `python -m pytest -o addopts='' -q` and `python -m pip check`.
+4. Launch `python -m app.main` from the repository root. It binds `0.0.0.0:${PORT}`; `PORT` defaults to `8000`.
+5. Confirm `GET http://127.0.0.1:8000/health`, then connect an MCP client to `http://127.0.0.1:8000/mcp`.
+6. Inspect the twelve-tool allowlist, cash and orders with an MCP client. Do not infer a fill from transport success: require ok=true and status=filled.
 
-#### Verify health
-- Use MCP tool: `get_health()`
-- If health fails:
-  - confirm required environment variables are set
-  - confirm exchange endpoints are reachable (REST + websocket if enabled)
-  - confirm rate limits and policy allowlists are not blocking requests
+No deposit or live mode is available. To reset, run `python -m tools.authorize_paper_reset`
+as operator and explicitly authorize the one-use token. Never let an MCP caller
+mint its own token. Old cycles remain in SQLite.
 
-#### View metrics
-- Use MCP tool: `get_metrics_snapshot()`
-- Prometheus text format (no HTTP server): `get_metrics_prometheus()`
+On database errors, preserve the DB, WAL and SHM together. Stop the process before
+making a filesystem copy, or use SQLite's backup API for a consistent live backup.
+Never delete the database to cure a lock or silently fall back to another path.
+Legacy schemas fail closed and require a separate, audited migration.
 
-#### Kill switch (live trading)
-- Set `TRADING_HALTED=true` and restart the container.
+On stale/failed quotes, reject new fills and retry later with the same request ID.
+A persisted rejection is final for that ID; a deliberate new attempt requires a new
+ID and a new decision. Missing valuation returns an error, never zero equity.
+A split-affected holding is blocked; inspect and reconcile before resuming it.
 
-#### Rotate secrets
-- Prefer keystore or remote signer in live environments.
-- Rotate `BROKERAGE_*` credentials by updating env vars and restarting.
-
-#### Debug execution failures
-- Look for JSON logs with `event=tool_error` (and check `level`).
-- In approve-each mode, use `list_pending_executions()` to inspect pending proposals.
-- Re-run failed operations with an `idempotency_key` to avoid duplicates.
-
-#### Websocket market streams
-- Start public streams with `start_marketdata_ws(...)` and stop with `stop_marketdata_ws(...)`.
-- For brokerage-specific private order updates (if supported), use `start_brokerage_private_ws(...)` / `stop_brokerage_private_ws(...)`, and if available, inspect with
-  `list_brokerage_private_updates(...)`.
-
----
-
-### Incident playbooks
-
-#### 1) Rate limit storm (tools returning `rate_limited`)
-- **Symptoms**:
-  - Tools start failing with `rate_limited`
-  - Metrics show rising `counters.rate_limited_total`
-- **Triage**:
-  - Call `get_metrics_snapshot()` and inspect:
-    - `counters.rate_limit_checks_total`
-    - `counters.rate_limited_total`
-  - Check tool call patterns (agents may be looping/retrying too aggressively)
-- **Mitigation**:
-  - Reduce call frequency (prefer caching, batch calls, or use websocket streams)
-  - Raise limits (carefully):
-    - `RATE_LIMIT_DEFAULT_PER_MIN`
-    - `RATE_LIMIT_EXECUTION_PER_MIN`
-    - `RATE_LIMIT_<TOOL>_PER_MIN`
-
-#### 2) Websocket disconnect loop (public streams)
-- **Symptoms**:
-  - `get_marketdata_status()` shows websocket stream `last_error`
-  - Metrics show increasing websocket error/connect counters (e.g. `ws_*_error_total`)
-- **Triage**:
-  - Call `get_marketdata_status()` and inspect:
-    - `ws_streams`
-    - `stores.ws` freshness
-  - Ensure outbound network access is available in the deployment environment
-- **Mitigation**:
-  - Stop and restart the stream:
-    - `stop_marketdata_ws(exchange, market_type)`
-    - `start_marketdata_ws(exchange, symbols_json, market_type)`
-  - If unreliable, fall back to `ccxt_rest` and/or ingest your own feed.
-
-#### 3) Exchange outage / degraded mode
-- **Symptoms**:
-  - CCXT calls failing (`ccxt_exchange_unavailable`, `ccxt_network_error`)
-  - Private update pollers show errors / lag
-- **Triage**:
-  - Check `docs/EXCHANGES.md` (Supported vs Experimental expectations)
-  - Use `get_brokerage_capabilities(brokerage)` for `has.*` and market metadata
-  - Check market data: `get_ticker(symbol)` meta → `candidates`
-- **Mitigation**:
-  - Switch market data sources (prefer websocket/ingest, reduce REST usage)
-  - Temporarily disable live execution with `TRADING_HALTED=true`
-
-#### 4) Signer unreachable (remote signer / keystore issues)
-- **Symptoms**:
-  - Live execution fails with signing errors (if using signed messages/headers)
-  - Errors like `remote_signer_error` or signer initialization failures
-- **Triage**:
-  - Confirm signer configuration (`SIGNER_TYPE`, keystore path/password, remote signer URL)
-  - Check logs for `tool_error` around execution tools
-- **Mitigation**:
-  - Halt live trading (`TRADING_HALTED=true`)
-  - Fix signer connectivity/credentials, then restart
-
-#### 5) Policy blocks (allowlists / limits)
-- **Symptoms**:
-  - Errors like `token_not_allowed`, `trade_amount_too_large`, `router_not_allowed`
-- **Triage**:
-  - Review `env.example` and current env values for `ALLOW_*`, `MAX_*`
-  - If you are intentionally loosening limits, ensure Advanced Risk consent is accepted
-- **Mitigation**:
-  - Adjust allowlists/limits, or set a stricter risk profile
-  - Keep `EXECUTION_APPROVAL_MODE=approve_each` while validating new configs
-
-### Backup/restore (paper mode)
-- Paper ledger is stored in `data/paper.db` (ignored by git).
-- Back up by copying the file while the container is stopped.
-
+Runtime boundaries: unauthenticated local Streamable HTTP only; no OAuth, public
+auth or Railway setup exists here. Linux container execution, deployment
+persistence/restart tests and ChatGPT end-to-end validation belong to the next
+separately authorized phase.

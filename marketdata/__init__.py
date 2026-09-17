@@ -1,15 +1,6 @@
-from .bus import MarketDataBus
-from .plugins import load_marketdata_plugins
-from .providers import IngestMarketDataProvider, StockMarketDataProvider
-from .store import InMemoryMarketDataStore
-from .ws_streams import WsStreamManager
+"""Read-only stock market data for the paper-only service."""
+from .calendar import USMarketCalendar
+from .exchange_provider import ExchangeProvider, StockQuote, normalize_symbol
 
-__all__ = [
-    "StockMarketDataProvider",
-    "IngestMarketDataProvider",
-    "InMemoryMarketDataStore",
-    "MarketDataBus",
-    "load_marketdata_plugins",
-    "WsStreamManager",
-]
+__all__ = ["ExchangeProvider", "StockQuote", "USMarketCalendar", "normalize_symbol"]
 
