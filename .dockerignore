@@ -19,7 +19,6 @@ data/
 # Dev-only
 tests/
 .github/
-requirements.lock.txt
 requirements-dev.txt
 docs/
 tools/
