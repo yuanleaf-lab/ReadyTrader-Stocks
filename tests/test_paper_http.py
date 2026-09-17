@@ -12,19 +12,21 @@ from tests.test_paper_mcp import EXPECTED
 from tests.test_paper_service import service
 
 
-def _request(client, payload, session_id=None):
+def _request(client, payload, session_id=None, token=None):
     headers = {'Accept': 'application/json, text/event-stream', 'Content-Type': 'application/json'}
     if session_id:
         headers['Mcp-Session-Id'] = session_id
+    if token:
+        headers['Authorization'] = f'Bearer {token}'
     return client.post('/mcp', content=json.dumps(payload), headers=headers)
 
 
-def _initialize(client):
+def _initialize(client, token=None):
     response = _request(client, {
         'jsonrpc': '2.0', 'id': 1, 'method': 'initialize',
         'params': {'protocolVersion': '2025-03-26', 'capabilities': {},
                    'clientInfo': {'name': 'paper-http-test', 'version': '1.0'}},
-    })
+    }, token=token)
     assert response.status_code == 200
     body = response.json()
     assert body['result']['serverInfo']['name'] == 'ReadyTrader-Paper'
@@ -46,22 +48,26 @@ def test_http_port_defaults_and_rejects_invalid_values(monkeypatch):
 @pytest.mark.parametrize('environment', [
     {'PAPER_MODE': 'false'},
     {'PAPER_DB_PATH': 'database-path-is-a-directory'},
+    {'RAILWAY_ENVIRONMENT': 'production'},
 ])
 def test_http_process_fails_clearly_for_unsafe_startup(tmp_path, environment):
     repo = Path(__file__).resolve().parents[1]
     env = dict(os.environ, PORT='47999', **environment)
+    env.pop('MCP_AUTH_TOKEN', None)
     if environment.get('PAPER_DB_PATH') == 'database-path-is-a-directory':
         env['PAPER_DB_PATH'] = str(tmp_path)
     result = subprocess.run([sys.executable, '-m', 'app.main'], cwd=repo, env=env,
                             capture_output=True, text=True, timeout=30)
     assert result.returncode != 0
     assert 'Paper-only MCP startup failed:' in result.stderr
+    if environment.get('RAILWAY_ENVIRONMENT'):
+        assert 'MCP_AUTH_TOKEN is required' in result.stderr
 
 
 def test_streamable_http_health_initialize_and_allowed_tools(tmp_path):
     from app.main import create_http_app
 
-    with TestClient(create_http_app(service(tmp_path), sampling=False)) as client:
+    with TestClient(create_http_app(service(tmp_path), sampling=False, auth=None)) as client:
         health = client.get('/health')
         assert health.status_code == 200
         assert health.json() == {'ok': True, 'status': 'ok', 'mode': 'paper', 'paper_only': True, 'database': 'ok'}
@@ -90,3 +96,35 @@ def test_streamable_http_health_initialize_and_allowed_tools(tmp_path):
         missing_content = missing.json()['result']['content']
         assert missing_content[0]['type'] == 'text'
         assert 'Unknown tool' in missing_content[0]['text']
+
+
+def test_remote_mcp_requires_bearer_token_but_health_stays_public(tmp_path, monkeypatch):
+    from app.main import create_http_app
+
+    token = 'unit-test-token'
+    monkeypatch.setenv('MCP_AUTH_TOKEN', token)
+    monkeypatch.delenv('RAILWAY_ENVIRONMENT', raising=False)
+
+    with TestClient(create_http_app(service(tmp_path), sampling=False)) as client:
+        health = client.get('/health')
+        assert health.status_code == 200
+
+        unauthenticated = _request(client, {
+            'jsonrpc': '2.0', 'id': 1, 'method': 'initialize',
+            'params': {'protocolVersion': '2025-03-26', 'capabilities': {},
+                       'clientInfo': {'name': 'paper-http-test', 'version': '1.0'}},
+        })
+        assert unauthenticated.status_code == 401
+
+        wrong = _request(client, {
+            'jsonrpc': '2.0', 'id': 2, 'method': 'initialize',
+            'params': {'protocolVersion': '2025-03-26', 'capabilities': {},
+                       'clientInfo': {'name': 'paper-http-test', 'version': '1.0'}},
+        }, token='wrong-token')
+        assert wrong.status_code == 401
+
+        session_id = _initialize(client, token=token)
+        tools = _request(client, {'jsonrpc': '2.0', 'id': 3, 'method': 'tools/list'},
+                         session_id=session_id, token=token)
+        assert tools.status_code == 200
+        assert {tool['name'] for tool in tools.json()['result']['tools']} == EXPECTED
