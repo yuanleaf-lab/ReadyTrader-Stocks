@@ -12,21 +12,19 @@ from tests.test_paper_mcp import EXPECTED
 from tests.test_paper_service import service
 
 
-def _request(client, payload, session_id=None, token=None):
+def _request(client, payload, session_id=None, path='/mcp'):
     headers = {'Accept': 'application/json, text/event-stream', 'Content-Type': 'application/json'}
     if session_id:
         headers['Mcp-Session-Id'] = session_id
-    if token:
-        headers['Authorization'] = f'Bearer {token}'
-    return client.post('/mcp', content=json.dumps(payload), headers=headers)
+    return client.post(path, content=json.dumps(payload), headers=headers)
 
 
-def _initialize(client, token=None):
+def _initialize(client, path='/mcp'):
     response = _request(client, {
         'jsonrpc': '2.0', 'id': 1, 'method': 'initialize',
         'params': {'protocolVersion': '2025-03-26', 'capabilities': {},
                    'clientInfo': {'name': 'paper-http-test', 'version': '1.0'}},
-    }, token=token)
+    }, path=path)
     assert response.status_code == 200
     body = response.json()
     assert body['result']['serverInfo']['name'] == 'ReadyTrader-Paper'
@@ -45,6 +43,27 @@ def test_http_port_defaults_and_rejects_invalid_values(monkeypatch):
         resolve_http_port()
 
 
+def test_http_path_defaults_locally_and_requires_secret_on_railway(monkeypatch):
+    from app.main import resolve_mcp_path
+
+    monkeypatch.delenv('MCP_PATH', raising=False)
+    monkeypatch.delenv('RAILWAY_ENVIRONMENT', raising=False)
+    assert resolve_mcp_path() == '/mcp'
+
+    secret = '/mcp-' + ('a' * 48)
+    monkeypatch.setenv('MCP_PATH', secret)
+    assert resolve_mcp_path() == secret
+
+    monkeypatch.setenv('MCP_PATH', '/mcp-short')
+    with pytest.raises(ValueError, match='MCP_PATH'):
+        resolve_mcp_path()
+
+    monkeypatch.delenv('MCP_PATH', raising=False)
+    monkeypatch.setenv('RAILWAY_ENVIRONMENT', 'production')
+    with pytest.raises(ValueError, match='MCP_PATH is required'):
+        resolve_mcp_path()
+
+
 @pytest.mark.parametrize('environment', [
     {'PAPER_MODE': 'false'},
     {'PAPER_DB_PATH': 'database-path-is-a-directory'},
@@ -53,7 +72,7 @@ def test_http_port_defaults_and_rejects_invalid_values(monkeypatch):
 def test_http_process_fails_clearly_for_unsafe_startup(tmp_path, environment):
     repo = Path(__file__).resolve().parents[1]
     env = dict(os.environ, PORT='47999', **environment)
-    env.pop('MCP_AUTH_TOKEN', None)
+    env.pop('MCP_PATH', None)
     if environment.get('PAPER_DB_PATH') == 'database-path-is-a-directory':
         env['PAPER_DB_PATH'] = str(tmp_path)
     result = subprocess.run([sys.executable, '-m', 'app.main'], cwd=repo, env=env,
@@ -61,13 +80,13 @@ def test_http_process_fails_clearly_for_unsafe_startup(tmp_path, environment):
     assert result.returncode != 0
     assert 'Paper-only MCP startup failed:' in result.stderr
     if environment.get('RAILWAY_ENVIRONMENT'):
-        assert 'MCP_AUTH_TOKEN is required' in result.stderr
+        assert 'MCP_PATH is required' in result.stderr
 
 
 def test_streamable_http_health_initialize_and_allowed_tools(tmp_path):
     from app.main import create_http_app
 
-    with TestClient(create_http_app(service(tmp_path), sampling=False, auth=None)) as client:
+    with TestClient(create_http_app(service(tmp_path), sampling=False, auth=None, mcp_path='/mcp')) as client:
         health = client.get('/health')
         assert health.status_code == 200
         assert health.json() == {'ok': True, 'status': 'ok', 'mode': 'paper', 'paper_only': True, 'database': 'ok'}
@@ -98,33 +117,23 @@ def test_streamable_http_health_initialize_and_allowed_tools(tmp_path):
         assert 'Unknown tool' in missing_content[0]['text']
 
 
-def test_remote_mcp_requires_bearer_token_but_health_stays_public(tmp_path, monkeypatch):
+def test_remote_mcp_uses_secret_path_without_auth_and_health_stays_public(tmp_path):
     from app.main import create_http_app
 
-    token = 'unit-test-token'
-    monkeypatch.setenv('MCP_AUTH_TOKEN', token)
-    monkeypatch.delenv('RAILWAY_ENVIRONMENT', raising=False)
-
-    with TestClient(create_http_app(service(tmp_path), sampling=False)) as client:
+    secret = '/mcp-' + ('b' * 48)
+    with TestClient(create_http_app(service(tmp_path), sampling=False, auth=None, mcp_path=secret)) as client:
         health = client.get('/health')
         assert health.status_code == 200
 
-        unauthenticated = _request(client, {
+        old_path = _request(client, {
             'jsonrpc': '2.0', 'id': 1, 'method': 'initialize',
             'params': {'protocolVersion': '2025-03-26', 'capabilities': {},
                        'clientInfo': {'name': 'paper-http-test', 'version': '1.0'}},
-        })
-        assert unauthenticated.status_code == 401
+        }, path='/mcp')
+        assert old_path.status_code == 404
 
-        wrong = _request(client, {
-            'jsonrpc': '2.0', 'id': 2, 'method': 'initialize',
-            'params': {'protocolVersion': '2025-03-26', 'capabilities': {},
-                       'clientInfo': {'name': 'paper-http-test', 'version': '1.0'}},
-        }, token='wrong-token')
-        assert wrong.status_code == 401
-
-        session_id = _initialize(client, token=token)
+        session_id = _initialize(client, path=secret)
         tools = _request(client, {'jsonrpc': '2.0', 'id': 3, 'method': 'tools/list'},
-                         session_id=session_id, token=token)
+                         session_id=session_id, path=secret)
         assert tools.status_code == 200
         assert {tool['name'] for tool in tools.json()['result']['tools']} == EXPECTED
