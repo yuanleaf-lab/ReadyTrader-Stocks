@@ -20,5 +20,5 @@ COPY . .
 # Ensure data directory exists
 RUN mkdir -p data
 
-# Streamable HTTP entry point. Platform deployment remains outside this stage.
-CMD ["python", "app/main.py"]
+# Streamable HTTP entry point. Run as a module so the repository root remains on sys.path.
+CMD ["python", "-m", "app.main"]
